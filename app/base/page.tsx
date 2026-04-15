@@ -1,550 +1,427 @@
-'use client'
+"use client"
 
-import { useEffect, useRef, useState } from 'react'
-import GameHeader from '../../components/GameHeader'
-import { RESOURCES, UNITS } from '../../lib/gameConfig'
-import { calculateProduction } from '../../lib/economy'
+import { useMemo, useState } from "react"
 import {
-  loadResources,
-  saveResources,
-  loadUnits,
-  saveUnits,
-  loadBuildings,
-  saveBuildings,
-  loadTrainingQueues,
-  saveTrainingQueues,
-  defaultBuildings,
-  type Buildings,
-  type TrainingQueues,
-} from '../../lib/storage'
-import { syncGameProgress } from '../../lib/gameSync'
-import { BUILDING_COST } from '../../lib/buildings'
+  Coins,
+  Factory,
+  Fuel,
+  Users,
+  Swords,
+  Crosshair,
+  Truck,
+  Building2,
+  Pickaxe,
+  FlaskConical,
+  Shield,
+  TimerReset,
+  PackagePlus,
+} from "lucide-react"
+import { useGameSync } from "../../lib/useGameSync"
+import {
+  claimEmergencySupply,
+  getEmergencySupplyRemainingMs,
+  startBuildingUpgrade,
+  startUnitTraining,
+} from "../../lib/actions"
+import { useToast } from "../../components/ToastProvider"
 
-type UnitType = 'infantry' | 'armored' | 'tank'
-type BuildingType = 'gold_mine' | 'oil_refinery' | 'steel_factory'
+const unitLabelMap = {
+  infantry: "보병",
+  sniper: "저격수",
+  tank: "탱크",
+} as const
 
-type Toast = {
-  id: number
-  message: string
+const buildingLabelMap = {
+  hq: "본부",
+  ironMine: "철광소",
+  refinery: "정제소",
+  barracks: "병영",
+} as const
+
+function formatSeconds(ms: number) {
+  return Math.max(0, Math.ceil(ms / 1000))
 }
 
-const TRAIN_TIME: Record<UnitType, number> = {
-  infantry: 5000,
-  armored: 10000,
-  tank: 15000,
+function getBarracksTrainingMultiplier(level: number) {
+  const reduced = 1 - Math.max(0, level - 1) * 0.08
+  return Math.max(0.5, reduced)
 }
 
-const UNIT_LABELS: Record<UnitType, string> = {
-  infantry: '보병',
-  armored: '장갑차',
-  tank: '탱크',
-}
-
-const BUILDING_LABELS: Record<BuildingType, string> = {
-  gold_mine: '금광',
-  oil_refinery: '정유소',
-  steel_factory: '제철소',
+function getReducedDuration(baseMs: number, barracksLevel: number) {
+  return Math.round(baseMs * getBarracksTrainingMultiplier(barracksLevel))
 }
 
 export default function BasePage() {
-  const [resources, setResources] = useState(RESOURCES)
-  const [units, setUnits] = useState({
-    infantry: 0,
-    armored: 0,
-    tank: 0,
-  })
-  const [training, setTraining] = useState<TrainingQueues>({
-    infantry: [],
-    armored: [],
-    tank: [],
-  })
-  const [buildings, setBuildings] = useState<Buildings>(defaultBuildings)
-  const [loaded, setLoaded] = useState(false)
-  const [now, setNow] = useState(Date.now())
-  const [toasts, setToasts] = useState<Toast[]>([])
+  const { resources, units, buildings, training, refresh, isHydrated } =
+    useGameSync()
+  const { showToast } = useToast()
+  const [supplyMessage, setSupplyMessage] = useState("")
 
-  const lastToastRef = useRef<{ message: string; time: number } | null>(null)
+  const supplyRemainSec = useMemo(() => {
+    return formatSeconds(getEmergencySupplyRemainingMs())
+  }, [resources, buildings, training])
 
-  const pushToast = (message: string) => {
-    const current = Date.now()
-    const lastToast = lastToastRef.current
+  const infantryDuration = useMemo(
+    () => getReducedDuration(30_000, buildings.barracks),
+    [buildings.barracks]
+  )
+  const sniperDuration = useMemo(
+    () => getReducedDuration(45_000, buildings.barracks),
+    [buildings.barracks]
+  )
+  const tankDuration = useMemo(
+    () => getReducedDuration(70_000, buildings.barracks),
+    [buildings.barracks]
+  )
 
-    if (
-      lastToast &&
-      lastToast.message === message &&
-      current - lastToast.time < 700
-    ) {
-      return
-    }
+  const barracksReductionRate = useMemo(() => {
+    const multiplier = getBarracksTrainingMultiplier(buildings.barracks)
+    return Math.round((1 - multiplier) * 100)
+  }, [buildings.barracks])
 
-    lastToastRef.current = { message, time: current }
-
-    const id = current + Math.floor(Math.random() * 1000)
-
-    setToasts((prev) => [...prev, { id, message }])
-
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((toast) => toast.id !== id))
-    }, 3000)
-  }
-
-  useEffect(() => {
-    const synced = syncGameProgress()
-
-    setResources(synced.resources)
-    setUnits(synced.units)
-    setBuildings(synced.buildings)
-    setTraining(synced.training)
-    setLoaded(true)
-
-    if (synced.completedTraining.infantry > 0) {
-      pushToast(`보병 훈련 완료 x${synced.completedTraining.infantry}`)
-    }
-    if (synced.completedTraining.armored > 0) {
-      pushToast(`장갑차 훈련 완료 x${synced.completedTraining.armored}`)
-    }
-    if (synced.completedTraining.tank > 0) {
-      pushToast(`탱크 훈련 완료 x${synced.completedTraining.tank}`)
-    }
-
-    synced.completedBuildings.forEach((building) => {
-      pushToast(`${BUILDING_LABELS[building]} 업그레이드 완료`)
-    })
-  }, [])
-
-  useEffect(() => {
-    if (!loaded) return
-    saveResources(resources)
-  }, [resources, loaded])
-
-  useEffect(() => {
-    if (!loaded) return
-    saveUnits(units)
-  }, [units, loaded])
-
-  useEffect(() => {
-    if (!loaded) return
-    saveBuildings(buildings)
-  }, [buildings, loaded])
-
-  useEffect(() => {
-    if (!loaded) return
-    saveTrainingQueues(training)
-  }, [training, loaded])
-
-  useEffect(() => {
-    const interval = setInterval(() => {
-      const currentTime = Date.now()
-      setNow(currentTime)
-
-      setBuildings((prev) => {
-        let changed = false
-
-        const next: Buildings = {
-          gold_mine: { ...prev.gold_mine },
-          oil_refinery: { ...prev.oil_refinery },
-          steel_factory: { ...prev.steel_factory },
-        }
-
-        ;(['gold_mine', 'oil_refinery', 'steel_factory'] as BuildingType[]).forEach(
-          (key) => {
-            const building = next[key]
-
-            if (
-              building.upgradingUntil !== null &&
-              currentTime >= building.upgradingUntil
-            ) {
-              next[key] = {
-                level: building.level + 1,
-                upgradingUntil: null,
-              }
-              changed = true
-              pushToast(`${BUILDING_LABELS[key]} 업그레이드 완료`)
-            }
-          }
-        )
-
-        return changed ? next : prev
+  const handleTrain = (
+    unitType: "infantry" | "sniper" | "tank",
+    costGold: number,
+    costIron: number,
+    costFuel: number,
+    durationMs: number
+  ) => {
+    try {
+      startUnitTraining({
+        unitType,
+        amount: 1,
+        costGold,
+        costIron,
+        costFuel,
+        durationMs,
       })
+      refresh()
+      showToast(`${unitLabelMap[unitType]} 생산을 시작했습니다.`, "success")
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "훈련 시작 실패",
+        "error"
+      )
+    }
+  }
 
-      setTraining((prev) => {
-        const next = {
-          infantry: [...prev.infantry],
-          armored: [...prev.armored],
-          tank: [...prev.tank],
-        }
-
-        let gainedInfantry = 0
-        let gainedArmored = 0
-        let gainedTank = 0
-        let changed = false
-
-        ;(['infantry', 'armored', 'tank'] as UnitType[]).forEach((type) => {
-          const remaining = next[type].filter((finishTime) => finishTime > currentTime)
-          const completed = next[type].length - remaining.length
-
-          if (completed > 0) {
-            changed = true
-
-            if (type === 'infantry') gainedInfantry += completed
-            if (type === 'armored') gainedArmored += completed
-            if (type === 'tank') gainedTank += completed
-
-            if (completed === 1) {
-              pushToast(`${UNIT_LABELS[type]} 훈련 완료!`)
-            } else {
-              pushToast(`${UNIT_LABELS[type]} 훈련 완료 x${completed}`)
-            }
-          }
-
-          next[type] = remaining
-        })
-
-        if (gainedInfantry > 0 || gainedArmored > 0 || gainedTank > 0) {
-          setUnits((prevUnits) => ({
-            infantry: prevUnits.infantry + gainedInfantry,
-            armored: prevUnits.armored + gainedArmored,
-            tank: prevUnits.tank + gainedTank,
-          }))
-        }
-
-        return changed ? next : prev
+  const handleUpgrade = (
+    buildingType: "hq" | "ironMine" | "refinery" | "barracks",
+    costGold: number,
+    costIron: number,
+    durationMs: number
+  ) => {
+    try {
+      startBuildingUpgrade({
+        buildingType,
+        costGold,
+        costIron,
+        durationMs,
       })
-    }, 1000)
-
-    return () => clearInterval(interval)
-  }, [loaded])
-
-  const productionBuildings = {
-    gold_mine: buildings.gold_mine.level,
-    oil_refinery: buildings.oil_refinery.level,
-    steel_factory: buildings.steel_factory.level,
-  }
-
-  const handleProduction = () => {
-    const gained = calculateProduction(1, productionBuildings)
-
-    setResources((prev) => ({
-      gold: prev.gold + gained.gold,
-      fuel: prev.fuel + gained.fuel,
-      steel: prev.steel + gained.steel,
-    }))
-
-    pushToast('자원 생산 완료!')
-  }
-
-  const trainUnit = (type: UnitType) => {
-    const cost = UNITS[type].cost
-
-    if (
-      resources.gold < cost.gold ||
-      resources.fuel < cost.fuel ||
-      resources.steel < cost.steel
-    ) {
-      alert('자원이 부족합니다!')
-      return
+      refresh()
+      showToast(
+        `${buildingLabelMap[buildingType]} 업그레이드를 시작했습니다.`,
+        "success"
+      )
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "업그레이드 실패",
+        "error"
+      )
     }
-
-    setResources((prev) => ({
-      gold: prev.gold - cost.gold,
-      fuel: prev.fuel - cost.fuel,
-      steel: prev.steel - cost.steel,
-    }))
-
-    const finishTime = Date.now() + TRAIN_TIME[type]
-
-    setTraining((prev) => ({
-      ...prev,
-      [type]: [...prev[type], finishTime],
-    }))
-
-    pushToast(`${UNIT_LABELS[type]} 훈련 시작`)
   }
 
-  const upgradeBuilding = (type: BuildingType) => {
-    const building = buildings[type]
-
-    if (building.upgradingUntil) {
-      alert('이미 업그레이드 중입니다!')
-      return
+  const handleEmergencySupply = () => {
+    try {
+      const result = claimEmergencySupply()
+      setSupplyMessage(
+        `긴급 보급 도착: 금화 +${result.gold}, 은화 +${result.iron}, 연료 +${result.fuel}`
+      )
+      refresh()
+      showToast("긴급 보급을 수령했습니다.", "success")
+    } catch (error) {
+      showToast(
+        error instanceof Error ? error.message : "보급 요청 실패",
+        "error"
+      )
     }
-
-    const cost = BUILDING_COST[type](building.level)
-
-    if (
-      resources.gold < cost.gold ||
-      resources.fuel < cost.fuel ||
-      resources.steel < cost.steel
-    ) {
-      alert('자원이 부족합니다!')
-      return
-    }
-
-    setResources((prev) => ({
-      gold: prev.gold - cost.gold,
-      fuel: prev.fuel - cost.fuel,
-      steel: prev.steel - cost.steel,
-    }))
-
-    const finishTime = Date.now() + 10000
-
-    setBuildings((prev) => ({
-      ...prev,
-      [type]: {
-        ...prev[type],
-        upgradingUntil: finishTime,
-      },
-    }))
-
-    pushToast(`${BUILDING_LABELS[type]} 업그레이드 시작`)
   }
 
-  const getRemainingSeconds = (finishTime: number | null) => {
-    if (!finishTime) return 0
-    return Math.max(0, Math.ceil((finishTime - now) / 1000))
-  }
-
-  const getFirstTrainingSeconds = (type: UnitType) => {
-    if (training[type].length === 0) return 0
-    return Math.max(0, Math.ceil((training[type][0] - now) / 1000))
+  if (!isHydrated) {
+    return (
+      <main className="min-h-screen bg-[#05070d] px-5 py-6 text-white">
+        <section className="rounded-[28px] border border-white/10 bg-white/[0.03] p-5">
+          <div className="text-white/60">데이터 불러오는 중...</div>
+        </section>
+      </main>
+    )
   }
 
   return (
-    <main className="min-h-screen bg-zinc-950 pb-28 text-white">
-      <GameHeader />
+    <main className="min-h-screen bg-[#05070d] px-5 py-6 text-white">
+      <section className="rounded-[30px] border border-blue-500/20 bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.25),_transparent_55%),linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.015))] p-6 shadow-[0_20px_60px_rgba(0,0,0,0.28)]">
+        <div className="mb-3 text-xs tracking-[0.35em] text-white/45">
+          BASE CONTROL
+        </div>
+        <h1 className="text-4xl font-black">기지 관리</h1>
+        <p className="mt-4 text-lg text-white/72">
+          자원 생산, 병력 훈련, 건물 업그레이드를 관리합니다.
+        </p>
+        <p className="mt-2 text-sm text-white/55">
+          자동 생산: 본부에서 금화, 철광소에서 은화, 정제소에서 연료가 시간마다 누적됩니다.
+        </p>
+      </section>
 
-      <div className="pointer-events-none fixed right-3 top-4 z-[60] flex w-[calc(100vw-1.5rem)] max-w-[320px] flex-col gap-2 sm:right-4 sm:w-[320px]">
-        {toasts.map((toast) => (
-          <div
-            key={toast.id}
-            className="rounded-2xl border border-blue-500/20 bg-zinc-900/95 px-4 py-3 shadow-2xl shadow-black/30 backdrop-blur"
-          >
-            <p className="text-sm font-semibold text-zinc-100">{toast.message}</p>
+      <section className="mt-6 grid grid-cols-1 gap-3 md:grid-cols-4">
+        <div className="rounded-[24px] border border-yellow-500/20 bg-yellow-500/10 p-4">
+          <div className="flex items-center gap-2 text-sm text-yellow-200/70">
+            <Coins className="h-4 w-4 text-yellow-300" />
+            보유 금화
           </div>
-        ))}
-      </div>
+          <div className="mt-2 text-3xl font-black">{resources.gold}</div>
+        </div>
 
-      <section className="border-b border-zinc-800 bg-zinc-900/80 backdrop-blur">
-        <div className="mx-auto max-w-7xl px-4 py-5 sm:px-6 sm:py-6">
-          <p className="text-xs uppercase tracking-[0.2em] text-zinc-400 sm:text-sm sm:tracking-[0.25em]">
-            Base Control
-          </p>
-          <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">
-            기지 관리
-          </h1>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-300 sm:text-base">
-            자원을 생산하고, 병력을 훈련하고, 생산 시설을 강화해 전쟁 수행 능력을 높이세요.
-          </p>
+        <div className="rounded-[24px] border border-sky-500/20 bg-sky-500/10 p-4">
+          <div className="flex items-center gap-2 text-sm text-sky-200/70">
+            <Factory className="h-4 w-4 text-sky-300" />
+            보유 은화
+          </div>
+          <div className="mt-2 text-3xl font-black">{resources.iron}</div>
+        </div>
+
+        <div className="rounded-[24px] border border-orange-500/20 bg-orange-500/10 p-4">
+          <div className="flex items-center gap-2 text-sm text-orange-200/70">
+            <Fuel className="h-4 w-4 text-orange-300" />
+            보유 연료
+          </div>
+          <div className="mt-2 text-3xl font-black">{resources.fuel}</div>
+        </div>
+
+        <div className="rounded-[24px] border border-emerald-500/20 bg-emerald-500/10 p-4">
+          <div className="flex items-center gap-2 text-sm text-emerald-200/70">
+            <Users className="h-4 w-4 text-emerald-300" />
+            보유 유닛
+          </div>
+          <div className="mt-2 text-2xl font-black">
+            {units.infantry} / {units.sniper} / {units.tank}
+          </div>
         </div>
       </section>
 
-      <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
-        <section className="mb-6 grid gap-3 sm:gap-4 md:grid-cols-3">
-          <div className="rounded-3xl border border-yellow-500/20 bg-yellow-500/10 p-4 sm:p-5">
-            <p className="text-sm text-yellow-200/80">골드</p>
-            <p className="mt-2 text-2xl font-black sm:text-3xl">💰 {resources.gold}</p>
+      <section className="mt-6 rounded-[28px] border border-cyan-500/15 bg-cyan-500/[0.06] p-5">
+        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <PackagePlus className="h-5 w-5 text-cyan-300" />
+              <h2 className="text-2xl font-black">긴급 보급</h2>
+            </div>
+            <p className="mt-2 text-sm text-white/65">
+              금화, 은화, 연료가 부족할 때 60초마다 추가 보급을 받을 수 있습니다.
+            </p>
+            {supplyMessage && (
+              <div className="mt-2 text-sm text-emerald-300">{supplyMessage}</div>
+            )}
           </div>
-          <div className="rounded-3xl border border-blue-500/20 bg-blue-500/10 p-4 sm:p-5">
-            <p className="text-sm text-blue-200/80">연료</p>
-            <p className="mt-2 text-2xl font-black sm:text-3xl">⛽ {resources.fuel}</p>
-          </div>
-          <div className="rounded-3xl border border-cyan-500/20 bg-cyan-500/10 p-4 sm:p-5">
-            <p className="text-sm text-cyan-200/80">철강</p>
-            <p className="mt-2 text-2xl font-black sm:text-3xl">🛠 {resources.steel}</p>
-          </div>
-        </section>
 
-        <section className="mb-8 grid gap-3 sm:flex sm:flex-wrap">
           <button
-            onClick={handleProduction}
-            className="w-full rounded-2xl bg-blue-600 px-5 py-3 font-bold transition hover:bg-blue-500 sm:w-auto"
+            onClick={handleEmergencySupply}
+            className="rounded-[20px] bg-cyan-600 px-5 py-4 font-bold text-white transition hover:bg-cyan-500"
           >
-            1시간 생산하기
+            {supplyRemainSec > 0
+              ? `보급 대기 ${supplyRemainSec}초`
+              : "긴급 보급 요청"}
           </button>
-        </section>
-
-        <div className="grid gap-6 xl:grid-cols-12">
-          <section className="xl:col-span-4 rounded-3xl border border-zinc-800 bg-zinc-900 p-4 sm:p-6">
-            <p className="text-sm text-zinc-400">Army Status</p>
-            <h2 className="mt-1 text-2xl font-bold">병력 현황</h2>
-
-            <div className="mt-5 space-y-3">
-              <div className="rounded-2xl bg-zinc-950/80 p-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-zinc-300">보병</span>
-                  <span className="text-xl font-bold">{units.infantry}</span>
-                </div>
-              </div>
-
-              <div className="rounded-2xl bg-zinc-950/80 p-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-zinc-300">장갑차</span>
-                  <span className="text-xl font-bold">{units.armored}</span>
-                </div>
-              </div>
-
-              <div className="rounded-2xl bg-zinc-950/80 p-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-zinc-300">탱크</span>
-                  <span className="text-xl font-bold">{units.tank}</span>
-                </div>
-              </div>
-            </div>
-
-            <div className="mt-6 rounded-2xl border border-zinc-800 bg-zinc-950/70 p-4">
-              <p className="mb-3 text-sm font-semibold text-zinc-300">훈련 대기열</p>
-              <div className="space-y-2 text-sm text-zinc-300">
-                <p>
-                  보병: {training.infantry.length}
-                  {training.infantry.length > 0 &&
-                    ` (${getFirstTrainingSeconds('infantry')}초 남음)`}
-                </p>
-                <p>
-                  장갑차: {training.armored.length}
-                  {training.armored.length > 0 &&
-                    ` (${getFirstTrainingSeconds('armored')}초 남음)`}
-                </p>
-                <p>
-                  탱크: {training.tank.length}
-                  {training.tank.length > 0 &&
-                    ` (${getFirstTrainingSeconds('tank')}초 남음)`}
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-6 grid gap-3">
-              <button
-                onClick={() => trainUnit('infantry')}
-                className="rounded-2xl bg-green-600 px-4 py-3 font-bold transition hover:bg-green-500"
-              >
-                보병 생산
-              </button>
-
-              <button
-                onClick={() => trainUnit('armored')}
-                className="rounded-2xl bg-amber-500 px-4 py-3 font-bold text-black transition hover:bg-amber-400"
-              >
-                장갑차 생산
-              </button>
-
-              <button
-                onClick={() => trainUnit('tank')}
-                className="rounded-2xl bg-red-600 px-4 py-3 font-bold transition hover:bg-red-500"
-              >
-                탱크 생산
-              </button>
-            </div>
-          </section>
-
-          <section className="xl:col-span-8 rounded-3xl border border-zinc-800 bg-zinc-900 p-4 sm:p-6">
-            <p className="text-sm text-zinc-400">Base Facilities</p>
-            <h2 className="mt-1 text-2xl font-bold">건물 현황</h2>
-
-            <div className="mt-5 grid gap-4 md:grid-cols-3 md:gap-5">
-              <div className="rounded-3xl border border-yellow-500/20 bg-gradient-to-b from-yellow-500/10 to-zinc-900 p-4 sm:p-5">
-                <p className="text-sm text-yellow-200/80">금광</p>
-                <p className="mt-2 text-2xl font-black sm:text-3xl">
-                  Lv.{buildings.gold_mine.level}
-                </p>
-                <p className="mt-2 text-sm text-zinc-300">
-                  시간당 골드 생산 효율 증가
-                </p>
-
-                {buildings.gold_mine.upgradingUntil && (
-                  <p className="mt-3 text-sm font-semibold text-yellow-300">
-                    업그레이드 중...{' '}
-                    {getRemainingSeconds(buildings.gold_mine.upgradingUntil)}초 남음
-                  </p>
-                )}
-
-                <button
-                  disabled={!!buildings.gold_mine.upgradingUntil}
-                  onClick={() => upgradeBuilding('gold_mine')}
-                  className="mt-5 w-full rounded-2xl bg-yellow-500 px-4 py-3 font-bold text-black transition hover:bg-yellow-400 disabled:bg-zinc-700 disabled:text-zinc-300"
-                >
-                  금광 업그레이드
-                </button>
-              </div>
-
-              <div className="rounded-3xl border border-blue-500/20 bg-gradient-to-b from-blue-500/10 to-zinc-900 p-4 sm:p-5">
-                <p className="text-sm text-blue-200/80">정유소</p>
-                <p className="mt-2 text-2xl font-black sm:text-3xl">
-                  Lv.{buildings.oil_refinery.level}
-                </p>
-                <p className="mt-2 text-sm text-zinc-300">
-                  시간당 연료 생산 효율 증가
-                </p>
-
-                {buildings.oil_refinery.upgradingUntil && (
-                  <p className="mt-3 text-sm font-semibold text-blue-300">
-                    업그레이드 중...{' '}
-                    {getRemainingSeconds(buildings.oil_refinery.upgradingUntil)}초 남음
-                  </p>
-                )}
-
-                <button
-                  disabled={!!buildings.oil_refinery.upgradingUntil}
-                  onClick={() => upgradeBuilding('oil_refinery')}
-                  className="mt-5 w-full rounded-2xl bg-blue-500 px-4 py-3 font-bold text-white transition hover:bg-blue-400 disabled:bg-zinc-700 disabled:text-zinc-300"
-                >
-                  정유소 업그레이드
-                </button>
-              </div>
-
-              <div className="rounded-3xl border border-cyan-500/20 bg-gradient-to-b from-cyan-500/10 to-zinc-900 p-4 sm:p-5">
-                <p className="text-sm text-cyan-200/80">제철소</p>
-                <p className="mt-2 text-2xl font-black sm:text-3xl">
-                  Lv.{buildings.steel_factory.level}
-                </p>
-                <p className="mt-2 text-sm text-zinc-300">
-                  시간당 철강 생산 효율 증가
-                </p>
-
-                {buildings.steel_factory.upgradingUntil && (
-                  <p className="mt-3 text-sm font-semibold text-cyan-300">
-                    업그레이드 중...{' '}
-                    {getRemainingSeconds(buildings.steel_factory.upgradingUntil)}초 남음
-                  </p>
-                )}
-
-                <button
-                  disabled={!!buildings.steel_factory.upgradingUntil}
-                  onClick={() => upgradeBuilding('steel_factory')}
-                  className="mt-5 w-full rounded-2xl bg-cyan-500 px-4 py-3 font-bold text-black transition hover:bg-cyan-400 disabled:bg-zinc-700 disabled:text-zinc-300"
-                >
-                  제철소 업그레이드
-                </button>
-              </div>
-            </div>
-
-            <div className="mt-6 rounded-3xl border border-zinc-800 bg-zinc-950/70 p-4 sm:p-5">
-              <p className="text-sm text-zinc-400">Production Summary</p>
-              <h3 className="mt-1 text-xl font-bold">현재 생산 효율</h3>
-
-              <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                <div className="rounded-2xl bg-zinc-900 p-4">
-                  <p className="text-sm text-zinc-400">골드 / 1시간</p>
-                  <p className="mt-1 text-2xl font-bold">
-                    {100 * buildings.gold_mine.level}
-                  </p>
-                </div>
-                <div className="rounded-2xl bg-zinc-900 p-4">
-                  <p className="text-sm text-zinc-400">연료 / 1시간</p>
-                  <p className="mt-1 text-2xl font-bold">
-                    {60 * buildings.oil_refinery.level}
-                  </p>
-                </div>
-                <div className="rounded-2xl bg-zinc-900 p-4">
-                  <p className="text-sm text-zinc-400">철강 / 1시간</p>
-                  <p className="mt-1 text-2xl font-bold">
-                    {40 * buildings.steel_factory.level}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </section>
         </div>
-      </div>
+      </section>
+
+      <section className="mt-6 rounded-[28px] border border-white/10 bg-white/[0.03] p-5">
+        <div className="mb-4 flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
+          <div>
+            <h2 className="text-2xl font-black">유닛 생산</h2>
+            <p className="mt-2 text-sm text-white/60">
+              병영 레벨 {buildings.barracks} · 현재 생산 시간 단축 {barracksReductionRate}%
+            </p>
+          </div>
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-3">
+          <button
+            onClick={() => handleTrain("infantry", 120, 60, 10, infantryDuration)}
+            className="rounded-[22px] border border-blue-500/20 bg-blue-600 px-5 py-4 text-left font-bold text-white shadow-[0_10px_30px_rgba(37,99,235,0.18)]"
+          >
+            <div className="flex items-center gap-2 text-xl">
+              <UnitIcon type="infantry" />
+              보병 생산
+            </div>
+            <div className="mt-3 text-sm text-white/80">
+              필요 재화: 금화 120 / 은화 60 / 연료 10
+            </div>
+            <div className="mt-1 text-sm text-white/80">
+              소요 시간: {formatSeconds(infantryDuration)}초
+            </div>
+          </button>
+
+          <button
+            onClick={() => handleTrain("sniper", 220, 140, 20, sniperDuration)}
+            className="rounded-[22px] border border-violet-500/20 bg-violet-600 px-5 py-4 text-left font-bold text-white shadow-[0_10px_30px_rgba(124,58,237,0.18)]"
+          >
+            <div className="flex items-center gap-2 text-xl">
+              <UnitIcon type="sniper" />
+              저격수 생산
+            </div>
+            <div className="mt-3 text-sm text-white/80">
+              필요 재화: 금화 220 / 은화 140 / 연료 20
+            </div>
+            <div className="mt-1 text-sm text-white/80">
+              소요 시간: {formatSeconds(sniperDuration)}초
+            </div>
+          </button>
+
+          <button
+            onClick={() => handleTrain("tank", 500, 320, 40, tankDuration)}
+            className="rounded-[22px] border border-emerald-500/20 bg-emerald-600 px-5 py-4 text-left font-bold text-white shadow-[0_10px_30px_rgba(5,150,105,0.18)]"
+          >
+            <div className="flex items-center gap-2 text-xl">
+              <UnitIcon type="tank" />
+              탱크 생산
+            </div>
+            <div className="mt-3 text-sm text-white/80">
+              필요 재화: 금화 500 / 은화 320 / 연료 40
+            </div>
+            <div className="mt-1 text-sm text-white/80">
+              소요 시간: {formatSeconds(tankDuration)}초
+            </div>
+          </button>
+        </div>
+      </section>
+
+      <section className="mt-6 rounded-[28px] border border-white/10 bg-white/[0.03] p-5">
+        <h2 className="mb-4 text-2xl font-black">건물 업그레이드</h2>
+
+        <div className="grid gap-3 md:grid-cols-4">
+          <button
+            onClick={() => handleUpgrade("hq", 700, 450, 90_000)}
+            className="rounded-[22px] border border-red-500/20 bg-red-600 px-5 py-4 text-left font-bold text-white"
+          >
+            <div className="flex items-center gap-2 text-xl">
+              <BuildingIcon type="hq" />
+              본부 업그레이드
+            </div>
+            <div className="mt-3 text-sm text-white/80">현재 Lv.{buildings.hq}</div>
+            <div className="mt-1 text-sm text-white/80">필요 재화: 금화 700 / 은화 450</div>
+            <div className="mt-1 text-sm text-white/80">소요 시간: 90초</div>
+            <div className="mt-3 text-xs text-white/70">
+              효과: 금화 자동 생산량이 증가합니다.
+            </div>
+          </button>
+
+          <button
+            onClick={() => handleUpgrade("ironMine", 350, 220, 45_000)}
+            className="rounded-[22px] border border-orange-500/20 bg-orange-600 px-5 py-4 text-left font-bold text-white"
+          >
+            <div className="flex items-center gap-2 text-xl">
+              <BuildingIcon type="ironMine" />
+              철광소 업그레이드
+            </div>
+            <div className="mt-3 text-sm text-white/80">현재 Lv.{buildings.ironMine}</div>
+            <div className="mt-1 text-sm text-white/80">필요 재화: 금화 350 / 은화 220</div>
+            <div className="mt-1 text-sm text-white/80">소요 시간: 45초</div>
+            <div className="mt-3 text-xs text-white/70">
+              효과: 은화 자동 생산량이 증가합니다.
+            </div>
+          </button>
+
+          <button
+            onClick={() => handleUpgrade("refinery", 420, 260, 55_000)}
+            className="rounded-[22px] border border-cyan-500/20 bg-cyan-600 px-5 py-4 text-left font-bold text-white"
+          >
+            <div className="flex items-center gap-2 text-xl">
+              <BuildingIcon type="refinery" />
+              정제소 업그레이드
+            </div>
+            <div className="mt-3 text-sm text-white/80">현재 Lv.{buildings.refinery}</div>
+            <div className="mt-1 text-sm text-white/80">필요 재화: 금화 420 / 은화 260</div>
+            <div className="mt-1 text-sm text-white/80">소요 시간: 55초</div>
+            <div className="mt-3 text-xs text-white/70">
+              효과: 연료 자동 생산량이 증가합니다.
+            </div>
+          </button>
+
+          <button
+            onClick={() => handleUpgrade("barracks", 500, 280, 60_000)}
+            className="rounded-[22px] border border-indigo-500/20 bg-indigo-600 px-5 py-4 text-left font-bold text-white"
+          >
+            <div className="flex items-center gap-2 text-xl">
+              <BuildingIcon type="barracks" />
+              병영 업그레이드
+            </div>
+            <div className="mt-3 text-sm text-white/80">현재 Lv.{buildings.barracks}</div>
+            <div className="mt-1 text-sm text-white/80">필요 재화: 금화 500 / 은화 280</div>
+            <div className="mt-1 text-sm text-white/80">소요 시간: 60초</div>
+            <div className="mt-3 text-xs text-white/70">
+              효과: 유닛 생산 시간이 단축됩니다.
+            </div>
+          </button>
+        </div>
+      </section>
+
+      <section className="mt-6 rounded-[28px] border border-white/10 bg-white/[0.03] p-5">
+        <div className="mb-4 flex items-center gap-2">
+          <TimerReset className="h-5 w-5 text-white/75" />
+          <h2 className="text-2xl font-black">진행 중</h2>
+        </div>
+
+        <div className="space-y-3">
+          {training.training.map((item) => (
+            <div
+              key={item.id}
+              className="rounded-[20px] border border-blue-500/20 bg-blue-500/10 p-4"
+            >
+              <div className="flex items-center gap-2 font-bold">
+                <UnitIcon type={item.unitType} />
+                {unitLabelMap[item.unitType]} x{item.amount}
+              </div>
+              <div className="mt-1 text-white/70">
+                남은시간: {Math.max(0, Math.ceil((item.endsAt - Date.now()) / 1000))}초
+              </div>
+            </div>
+          ))}
+
+          {training.upgrades.map((item) => (
+            <div
+              key={item.id}
+              className="rounded-[20px] border border-orange-500/20 bg-orange-500/10 p-4"
+            >
+              <div className="flex items-center gap-2 font-bold">
+                <BuildingIcon type={item.buildingType} />
+                {buildingLabelMap[item.buildingType]} → Lv.{item.targetLevel}
+              </div>
+              <div className="mt-1 text-white/70">
+                남은시간: {Math.max(0, Math.ceil((item.endsAt - Date.now()) / 1000))}초
+              </div>
+            </div>
+          ))}
+
+          {training.training.length === 0 && training.upgrades.length === 0 && (
+            <div className="rounded-[20px] border border-white/10 bg-black/20 p-5 text-white/55">
+              현재 진행 중인 작업이 없습니다.
+            </div>
+          )}
+        </div>
+      </section>
     </main>
   )
+}
+
+function BuildingIcon({ type }: { type: "hq" | "ironMine" | "refinery" | "barracks" }) {
+  if (type === "hq") return <Building2 className="h-5 w-5 text-red-200" />
+  if (type === "ironMine") return <Pickaxe className="h-5 w-5 text-orange-200" />
+  if (type === "refinery") return <FlaskConical className="h-5 w-5 text-cyan-200" />
+  return <Shield className="h-5 w-5 text-indigo-200" />
+}
+
+function UnitIcon({ type }: { type: "infantry" | "sniper" | "tank" }) {
+  if (type === "infantry") return <Swords className="h-5 w-5 text-blue-200" />
+  if (type === "sniper") return <Crosshair className="h-5 w-5 text-violet-200" />
+  return <Truck className="h-5 w-5 text-emerald-200" />
 }

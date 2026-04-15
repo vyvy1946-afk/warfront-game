@@ -1,59 +1,134 @@
-'use client'
+"use client"
 
-import { useRouter } from 'next/navigation'
-import GameHeader from '../../components/GameHeader'
-import { resetAllGameData } from '../../lib/storage'
+import { useMemo } from "react"
+import {
+  Settings2,
+  Trash2,
+  RotateCcw,
+  DatabaseZap,
+  Coins,
+  Factory,
+  Fuel,
+} from "lucide-react"
+import { loadReports, saveReports, saveTrainingQueues } from "../../lib/gameSync"
+import { clearAllGameData, emitGameUpdated } from "../../lib/gameState"
+import { useGameSync } from "../../lib/useGameSync"
+import { useToast } from "../../components/ToastProvider"
 
 export default function SettingsPage() {
-  const router = useRouter()
+  const { resources, units, buildings, training, refresh, isHydrated } =
+    useGameSync()
+  const { showToast } = useToast()
 
-  const handleReset = () => {
-    const ok = window.confirm(
-      '정말 게임 데이터를 모두 초기화할까요?\n자원, 병력, 건물, 훈련, 보고서가 전부 삭제됩니다.'
-    )
+  const reportCount = useMemo(
+    () => loadReports().length,
+    [resources, units, buildings, training]
+  )
 
+  const handleClearReports = () => {
+    const ok = window.confirm("전투 보고서를 모두 삭제할까요?")
     if (!ok) return
+    saveReports([])
+    emitGameUpdated()
+    refresh()
+    showToast("보고서를 모두 삭제했습니다.", "success")
+  }
 
-    resetAllGameData()
-    alert('게임 데이터를 초기화했습니다.')
-    router.push('/')
-    router.refresh()
+  const handleClearQueues = () => {
+    const ok = window.confirm("진행 중인 생산/업그레이드를 모두 취소할까요?")
+    if (!ok) return
+    saveTrainingQueues({ training: [], upgrades: [] })
+    emitGameUpdated()
+    refresh()
+    showToast("진행 중인 대기열을 초기화했습니다.", "success")
+  }
+
+  const handleResetGame = () => {
+    const ok = window.confirm("정말 게임 데이터를 초기화할까요?")
+    if (!ok) return
+    clearAllGameData()
+    showToast("게임 데이터를 초기화했습니다.", "success")
+    window.location.href = "/"
+  }
+
+  if (!isHydrated) {
+    return (
+      <main className="min-h-screen bg-[#05070d] px-5 py-6 text-white">
+        <section className="rounded-[28px] border border-white/10 bg-white/[0.03] p-5">
+          <div className="text-white/60">데이터 불러오는 중...</div>
+        </section>
+      </main>
+    )
   }
 
   return (
-    <main className="min-h-screen bg-zinc-950 pb-28 text-white">
-      <GameHeader />
+    <main className="min-h-screen bg-[#05070d] px-5 py-6 text-white">
+      <section className="rounded-[30px] border border-violet-500/20 bg-[radial-gradient(circle_at_top_left,_rgba(139,92,246,0.18),_transparent_55%),linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.015))] p-6">
+        <div className="mb-3 text-xs tracking-[0.35em] text-white/45">
+          SYSTEM CONTROL
+        </div>
+        <div className="flex items-center gap-2">
+          <Settings2 className="h-6 w-6 text-violet-200" />
+          <h1 className="text-4xl font-black">설정</h1>
+        </div>
+        <p className="mt-4 text-lg text-white/72">
+          저장 데이터와 진행 중인 항목을 관리합니다.
+        </p>
+      </section>
 
-      <section className="border-b border-zinc-800 bg-zinc-900/80 backdrop-blur">
-        <div className="mx-auto max-w-7xl px-4 py-5 sm:px-6 sm:py-6">
-          <p className="text-xs uppercase tracking-[0.2em] text-zinc-400 sm:text-sm sm:tracking-[0.25em]">
-            Settings
-          </p>
-          <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">
-            설정
-          </h1>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-300 sm:text-base">
-            게임 데이터를 관리하고 전체 초기화를 진행할 수 있습니다.
-          </p>
+      <section className="mt-6 rounded-[28px] border border-white/10 bg-white/[0.03] p-5">
+        <h2 className="mb-4 text-2xl font-black">현재 저장 상태</h2>
+        <div className="space-y-2 text-white/75">
+          <div className="flex items-center gap-2">
+            <Coins className="h-4 w-4 text-yellow-300" />
+            금화: {resources.gold}
+          </div>
+          <div className="flex items-center gap-2">
+            <Factory className="h-4 w-4 text-sky-300" />
+            은화: {resources.iron}
+          </div>
+          <div className="flex items-center gap-2">
+            <Fuel className="h-4 w-4 text-orange-300" />
+            연료: {resources.fuel}
+          </div>
+          <div>보병: {units.infantry}</div>
+          <div>저격수: {units.sniper}</div>
+          <div>탱크: {units.tank}</div>
+          <div>본부 레벨: {buildings.hq}</div>
+          <div>철광소 레벨: {buildings.ironMine}</div>
+          <div>정제소 레벨: {buildings.refinery}</div>
+          <div>병영 레벨: {buildings.barracks}</div>
+          <div>진행 중 훈련: {training.training.length}건</div>
+          <div>진행 중 업그레이드: {training.upgrades.length}건</div>
+          <div>보고서 수: {reportCount}건</div>
         </div>
       </section>
 
-      <div className="mx-auto max-w-4xl px-4 py-6 sm:px-6 sm:py-8">
-        <div className="rounded-3xl border border-red-500/20 bg-gradient-to-b from-red-500/10 to-zinc-900 p-6">
-          <p className="text-sm text-red-200/80">Danger Zone</p>
-          <h2 className="mt-2 text-2xl font-black">게임 초기화</h2>
-          <p className="mt-3 text-zinc-300">
-            현재 저장된 자원, 병력, 건물, 훈련 대기열, 보고서를 모두 삭제합니다.
-          </p>
+      <section className="mt-6 space-y-3 rounded-[28px] border border-white/10 bg-white/[0.03] p-5">
+        <button
+          onClick={handleClearReports}
+          className="flex w-full items-center gap-3 rounded-[20px] bg-white/10 px-4 py-4 text-left font-bold text-white"
+        >
+          <Trash2 className="h-5 w-5 text-red-300" />
+          보고서 전체 삭제
+        </button>
 
-          <button
-            onClick={handleReset}
-            className="mt-6 rounded-2xl bg-red-600 px-5 py-3 font-bold transition hover:bg-red-500"
-          >
-            게임 전체 초기화
-          </button>
-        </div>
-      </div>
+        <button
+          onClick={handleClearQueues}
+          className="flex w-full items-center gap-3 rounded-[20px] bg-white/10 px-4 py-4 text-left font-bold text-white"
+        >
+          <RotateCcw className="h-5 w-5 text-yellow-300" />
+          생산 / 업그레이드 대기열 초기화
+        </button>
+
+        <button
+          onClick={handleResetGame}
+          className="flex w-full items-center gap-3 rounded-[20px] bg-red-600 px-4 py-4 text-left font-bold text-white"
+        >
+          <DatabaseZap className="h-5 w-5 text-white" />
+          게임 전체 초기화
+        </button>
+      </section>
     </main>
   )
 }

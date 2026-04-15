@@ -1,178 +1,108 @@
-'use client'
+"use client"
 
-import { useEffect, useMemo, useState } from 'react'
-import GameHeader from '../../components/GameHeader'
+import { useEffect, useState } from "react"
 import {
-  loadReports,
-  type BattleReport,
-} from '../../lib/reports'
+  ScrollText,
+  Trophy,
+  CircleX,
+  Coins,
+  Factory,
+  Fuel,
+  Users,
+} from "lucide-react"
+import { loadReports, type BattleReport } from "../../lib/gameSync"
+import { GAME_UPDATED_EVENT } from "../../lib/gameState"
+import { useGameSync } from "../../lib/useGameSync"
 
 export default function ReportsPage() {
+  const { isHydrated } = useGameSync()
   const [reports, setReports] = useState<BattleReport[]>([])
 
   useEffect(() => {
-    setReports(loadReports())
-  }, [])
+    if (!isHydrated) return
 
-  const summary = useMemo(() => {
-    const wins = reports.filter((report) => report.result === 'win').length
-    const losses = reports.filter((report) => report.result === 'lose').length
+    const refreshReports = () => setReports(loadReports())
+    refreshReports()
 
-    const totalGold = reports.reduce((sum, report) => sum + (report.reward?.gold ?? 0), 0)
-    const totalFuel = reports.reduce((sum, report) => sum + (report.reward?.fuel ?? 0), 0)
-    const totalSteel = reports.reduce((sum, report) => sum + (report.reward?.steel ?? 0), 0)
-
-    return {
-      total: reports.length,
-      wins,
-      losses,
-      totalGold,
-      totalFuel,
-      totalSteel,
+    window.addEventListener(GAME_UPDATED_EVENT, refreshReports)
+    return () => {
+      window.removeEventListener(GAME_UPDATED_EVENT, refreshReports)
     }
-  }, [reports])
+  }, [isHydrated])
+
+  if (!isHydrated) {
+    return (
+      <main className="min-h-screen bg-[#05070d] px-5 py-6 text-white">
+        <section className="rounded-[28px] border border-white/10 bg-white/[0.03] p-5">
+          <div className="text-white/60">데이터 불러오는 중...</div>
+        </section>
+      </main>
+    )
+  }
 
   return (
-    <main className="min-h-screen bg-zinc-950 pb-28 text-white">
-      <GameHeader />
-
-      <section className="border-b border-zinc-800 bg-zinc-900/80 backdrop-blur">
-        <div className="mx-auto max-w-7xl px-4 py-5 sm:px-6 sm:py-6">
-          <p className="text-xs uppercase tracking-[0.2em] text-zinc-400 sm:text-sm sm:tracking-[0.25em]">
-            Combat Archive
-          </p>
-          <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">
-            보고서
-          </h1>
-          <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-300 sm:text-base">
-            전투 결과와 전리품을 확인하고 지난 교전 기록을 추적할 수 있습니다.
-          </p>
+    <main className="min-h-screen bg-[#05070d] px-5 py-6 text-white">
+      <section className="rounded-[30px] border border-emerald-500/20 bg-[radial-gradient(circle_at_top_left,_rgba(16,185,129,0.18),_transparent_55%),linear-gradient(180deg,rgba(255,255,255,0.03),rgba(255,255,255,0.015))] p-6">
+        <div className="mb-3 text-xs tracking-[0.35em] text-white/45">
+          COMBAT ARCHIVE
         </div>
+        <h1 className="text-4xl font-black">보고서</h1>
+        <p className="mt-4 text-lg text-white/72">
+          전투 기록과 전리품 결과를 확인합니다.
+        </p>
       </section>
 
-      <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
-        <section className="mb-8 grid gap-3 sm:gap-4 md:grid-cols-5">
-          <div className="rounded-3xl border border-zinc-800 bg-zinc-900 p-4 sm:p-5">
-            <p className="text-sm text-zinc-400">총 보고서</p>
-            <p className="mt-2 text-2xl font-black sm:text-3xl">{summary.total}</p>
-          </div>
-
-          <div className="rounded-3xl border border-emerald-500/20 bg-emerald-500/10 p-4 sm:p-5">
-            <p className="text-sm text-emerald-200/80">승리</p>
-            <p className="mt-2 text-2xl font-black text-emerald-300 sm:text-3xl">
-              {summary.wins}
-            </p>
-          </div>
-
-          <div className="rounded-3xl border border-red-500/20 bg-red-500/10 p-4 sm:p-5">
-            <p className="text-sm text-red-200/80">패배</p>
-            <p className="mt-2 text-2xl font-black text-red-300 sm:text-3xl">
-              {summary.losses}
-            </p>
-          </div>
-
-          <div className="rounded-3xl border border-yellow-500/20 bg-yellow-500/10 p-4 sm:p-5">
-            <p className="text-sm text-yellow-200/80">누적 골드</p>
-            <p className="mt-2 text-2xl font-black sm:text-3xl">+{summary.totalGold}</p>
-          </div>
-
-          <div className="rounded-3xl border border-blue-500/20 bg-blue-500/10 p-4 sm:p-5">
-            <p className="text-sm text-blue-200/80">누적 연료/철강</p>
-            <p className="mt-2 text-2xl font-black sm:text-3xl">
-              +{summary.totalFuel + summary.totalSteel}
-            </p>
-          </div>
-        </section>
-
+      <section className="mt-6 space-y-4">
         {reports.length === 0 ? (
-          <div className="rounded-3xl border border-zinc-800 bg-zinc-900 p-10 text-center">
-            <p className="text-xl font-bold text-zinc-200">
-              아직 전투 보고서가 없습니다.
-            </p>
-            <p className="mt-3 text-zinc-500">
-              월드맵에서 NPC 기지를 공격하면 작전 기록이 여기에 표시됩니다.
-            </p>
+          <div className="rounded-[24px] border border-white/10 bg-white/[0.03] p-5 text-white/55">
+            아직 전투 보고서가 없습니다.
           </div>
         ) : (
-          <section className="grid gap-5">
-            {reports.map((report) => {
-              const isWin = report.result === 'win'
+          reports.map((report) => (
+            <div
+              key={report.id}
+              className="rounded-[24px] border border-white/10 bg-white/[0.03] p-5 shadow-[0_12px_36px_rgba(0,0,0,0.2)]"
+            >
+              <div className="flex items-center gap-2 text-xl font-black">
+                <ScrollText className="h-5 w-5 text-white/85" />
+                {report.title}
+              </div>
 
-              return (
-                <article
-                  key={report.id}
-                  className={[
-                    'rounded-3xl border p-4 sm:p-6 shadow-2xl shadow-black/20',
-                    isWin
-                      ? 'border-emerald-500/20 bg-gradient-to-b from-emerald-500/10 to-zinc-900'
-                      : 'border-red-500/20 bg-gradient-to-b from-red-500/10 to-zinc-900',
-                  ].join(' ')}
-                >
-                  <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                    <div>
-                      <p className="text-sm text-zinc-400">{report.createdAt}</p>
-                      <h2 className="mt-2 text-2xl font-black tracking-tight sm:text-3xl">
-                        {report.title}
-                      </h2>
-                      <p className="mt-3 max-w-3xl whitespace-pre-line text-zinc-300">
-                        {report.detail}
-                      </p>
-                    </div>
+              <div className="mt-3 flex items-center gap-2 text-white/75">
+                {report.result === "win" ? (
+                  <Trophy className="h-4 w-4 text-emerald-300" />
+                ) : (
+                  <CircleX className="h-4 w-4 text-red-300" />
+                )}
+                결과: {report.result === "win" ? "승리" : "패배"}
+              </div>
 
-                    <div
-                      className={[
-                        'inline-flex rounded-full px-4 py-2 text-sm font-bold',
-                        isWin
-                          ? 'bg-emerald-500/15 text-emerald-300'
-                          : 'bg-red-500/15 text-red-300',
-                      ].join(' ')}
-                    >
-                      {isWin ? '작전 성공' : '작전 실패'}
-                    </div>
-                  </div>
+              <div className="mt-2 flex items-center gap-2 text-white/75">
+                <Coins className="h-4 w-4 text-yellow-300" />
+                금화 획득: +{report.rewardGold}
+              </div>
 
-                  {report.reward ? (
-                    <div className="mt-6">
-                      <p className="text-sm text-zinc-400">Loot Acquired</p>
+              <div className="mt-1 flex items-center gap-2 text-white/75">
+                <Factory className="h-4 w-4 text-sky-300" />
+                은화 획득: +{report.rewardIron}
+              </div>
 
-                      <div className="mt-3 grid gap-3 md:grid-cols-3">
-                        <div className="rounded-2xl border border-yellow-500/20 bg-yellow-500/10 p-4">
-                          <p className="text-sm text-yellow-200/80">골드</p>
-                          <p className="mt-1 text-2xl font-black">
-                            +{report.reward.gold}
-                          </p>
-                        </div>
+              <div className="mt-1 flex items-center gap-2 text-white/75">
+                <Fuel className="h-4 w-4 text-orange-300" />
+                연료 소모: -{report.fuelUsed}
+              </div>
 
-                        <div className="rounded-2xl border border-blue-500/20 bg-blue-500/10 p-4">
-                          <p className="text-sm text-blue-200/80">연료</p>
-                          <p className="mt-1 text-2xl font-black">
-                            +{report.reward.fuel}
-                          </p>
-                        </div>
-
-                        <div className="rounded-2xl border border-zinc-700 bg-zinc-950/80 p-4">
-                          <p className="text-sm text-zinc-300">철강</p>
-                          <p className="mt-1 text-2xl font-black">
-                            +{report.reward.steel}
-                          </p>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="mt-6 rounded-2xl border border-zinc-800 bg-zinc-950/60 p-4">
-                      <p className="text-sm text-zinc-400">Loss Summary</p>
-                      <p className="mt-2 text-zinc-300">
-                        전리품 획득 없이 전투가 종료되었습니다. 병력 손실 여부를
-                        기지 현황에서 확인하세요.
-                      </p>
-                    </div>
-                  )}
-                </article>
-              )
-            })}
-          </section>
+              <div className="mt-3 flex items-center gap-2 text-white/60">
+                <Users className="h-4 w-4 text-white/60" />
+                병력 손실
+              </div>
+              <div className="mt-1 text-white/75">
+                보병 -{report.lossInfantry} / 저격수 -{report.lossSniper} / 탱크 -{report.lossTank}
+              </div>
+            </div>
+          ))
         )}
-      </div>
+      </section>
     </main>
   )
 }
