@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import GameHeader from '../../components/GameHeader'
 import { RESOURCES, UNITS } from '../../lib/gameConfig'
 import { calculateProduction } from '../../lib/economy'
@@ -11,9 +11,13 @@ import {
   saveUnits,
   loadBuildings,
   saveBuildings,
+  loadTrainingQueues,
+  saveTrainingQueues,
   defaultBuildings,
   type Buildings,
+  type TrainingQueues,
 } from '../../lib/storage'
+import { syncGameProgress } from '../../lib/gameSync'
 import { BUILDING_COST } from '../../lib/buildings'
 
 type UnitType = 'infantry' | 'armored' | 'tank'
@@ -49,11 +53,7 @@ export default function BasePage() {
     armored: 0,
     tank: 0,
   })
-  const [training, setTraining] = useState<{
-    infantry: number[]
-    armored: number[]
-    tank: number[]
-  }>({
+  const [training, setTraining] = useState<TrainingQueues>({
     infantry: [],
     armored: [],
     tank: [],
@@ -63,8 +63,23 @@ export default function BasePage() {
   const [now, setNow] = useState(Date.now())
   const [toasts, setToasts] = useState<Toast[]>([])
 
+  const lastToastRef = useRef<{ message: string; time: number } | null>(null)
+
   const pushToast = (message: string) => {
-    const id = Date.now() + Math.floor(Math.random() * 1000)
+    const current = Date.now()
+    const lastToast = lastToastRef.current
+
+    if (
+      lastToast &&
+      lastToast.message === message &&
+      current - lastToast.time < 700
+    ) {
+      return
+    }
+
+    lastToastRef.current = { message, time: current }
+
+    const id = current + Math.floor(Math.random() * 1000)
 
     setToasts((prev) => [...prev, { id, message }])
 
@@ -74,14 +89,27 @@ export default function BasePage() {
   }
 
   useEffect(() => {
-    const savedResources = loadResources()
-    const savedUnits = loadUnits()
-    const savedBuildings = loadBuildings()
+    const synced = syncGameProgress()
 
-    setResources(savedResources)
-    setUnits(savedUnits)
-    setBuildings(savedBuildings)
+    setResources(synced.resources)
+    setUnits(synced.units)
+    setBuildings(synced.buildings)
+    setTraining(synced.training)
     setLoaded(true)
+
+    if (synced.completedTraining.infantry > 0) {
+      pushToast(`보병 훈련 완료 x${synced.completedTraining.infantry}`)
+    }
+    if (synced.completedTraining.armored > 0) {
+      pushToast(`장갑차 훈련 완료 x${synced.completedTraining.armored}`)
+    }
+    if (synced.completedTraining.tank > 0) {
+      pushToast(`탱크 훈련 완료 x${synced.completedTraining.tank}`)
+    }
+
+    synced.completedBuildings.forEach((building) => {
+      pushToast(`${BUILDING_LABELS[building]} 업그레이드 완료`)
+    })
   }, [])
 
   useEffect(() => {
@@ -100,6 +128,11 @@ export default function BasePage() {
   }, [buildings, loaded])
 
   useEffect(() => {
+    if (!loaded) return
+    saveTrainingQueues(training)
+  }, [training, loaded])
+
+  useEffect(() => {
     const interval = setInterval(() => {
       const currentTime = Date.now()
       setNow(currentTime)
@@ -113,21 +146,23 @@ export default function BasePage() {
           steel_factory: { ...prev.steel_factory },
         }
 
-        ;(Object.keys(next) as BuildingType[]).forEach((key) => {
-          const building = next[key]
+        ;(['gold_mine', 'oil_refinery', 'steel_factory'] as BuildingType[]).forEach(
+          (key) => {
+            const building = next[key]
 
-          if (
-            building.upgradingUntil !== null &&
-            currentTime >= building.upgradingUntil
-          ) {
-            next[key] = {
-              level: building.level + 1,
-              upgradingUntil: null,
+            if (
+              building.upgradingUntil !== null &&
+              currentTime >= building.upgradingUntil
+            ) {
+              next[key] = {
+                level: building.level + 1,
+                upgradingUntil: null,
+              }
+              changed = true
+              pushToast(`${BUILDING_LABELS[key]} 업그레이드 완료`)
             }
-            changed = true
-            pushToast(`${BUILDING_LABELS[key]} 업그레이드 완료! Lv.${building.level + 1}`)
           }
-        })
+        )
 
         return changed ? next : prev
       })
@@ -155,8 +190,10 @@ export default function BasePage() {
             if (type === 'armored') gainedArmored += completed
             if (type === 'tank') gainedTank += completed
 
-            for (let i = 0; i < completed; i += 1) {
+            if (completed === 1) {
               pushToast(`${UNIT_LABELS[type]} 훈련 완료!`)
+            } else {
+              pushToast(`${UNIT_LABELS[type]} 훈련 완료 x${completed}`)
             }
           }
 
@@ -176,7 +213,7 @@ export default function BasePage() {
     }, 1000)
 
     return () => clearInterval(interval)
-  }, [])
+  }, [loaded])
 
   const productionBuildings = {
     gold_mine: buildings.gold_mine.level,
@@ -262,22 +299,6 @@ export default function BasePage() {
     pushToast(`${BUILDING_LABELS[type]} 업그레이드 시작`)
   }
 
-  const resetGame = () => {
-    setResources(RESOURCES)
-    setUnits({
-      infantry: 0,
-      armored: 0,
-      tank: 0,
-    })
-    setTraining({
-      infantry: [],
-      armored: [],
-      tank: [],
-    })
-    setBuildings(defaultBuildings)
-    pushToast('기지를 초기화했습니다.')
-  }
-
   const getRemainingSeconds = (finishTime: number | null) => {
     if (!finishTime) return 0
     return Math.max(0, Math.ceil((finishTime - now) / 1000))
@@ -289,10 +310,10 @@ export default function BasePage() {
   }
 
   return (
-    <main className="min-h-screen bg-zinc-950 text-white">
+    <main className="min-h-screen bg-zinc-950 pb-28 text-white">
       <GameHeader />
 
-      <div className="pointer-events-none fixed right-4 top-20 z-[60] flex w-[320px] max-w-[calc(100vw-2rem)] flex-col gap-3">
+      <div className="pointer-events-none fixed right-3 top-4 z-[60] flex w-[calc(100vw-1.5rem)] max-w-[320px] flex-col gap-2 sm:right-4 sm:w-[320px]">
         {toasts.map((toast) => (
           <div
             key={toast.id}
@@ -304,51 +325,46 @@ export default function BasePage() {
       </div>
 
       <section className="border-b border-zinc-800 bg-zinc-900/80 backdrop-blur">
-        <div className="mx-auto max-w-7xl px-6 py-6">
-          <p className="text-sm uppercase tracking-[0.25em] text-zinc-400">
+        <div className="mx-auto max-w-7xl px-4 py-5 sm:px-6 sm:py-6">
+          <p className="text-xs uppercase tracking-[0.2em] text-zinc-400 sm:text-sm sm:tracking-[0.25em]">
             Base Control
           </p>
-          <h1 className="mt-2 text-4xl font-black tracking-tight">기지 관리</h1>
-          <p className="mt-3 max-w-2xl text-zinc-300">
+          <h1 className="mt-2 text-3xl font-black tracking-tight sm:text-4xl">
+            기지 관리
+          </h1>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-zinc-300 sm:text-base">
             자원을 생산하고, 병력을 훈련하고, 생산 시설을 강화해 전쟁 수행 능력을 높이세요.
           </p>
         </div>
       </section>
 
-      <div className="mx-auto max-w-7xl px-6 py-8">
-        <section className="mb-6 grid gap-4 md:grid-cols-3">
-          <div className="rounded-3xl border border-yellow-500/20 bg-yellow-500/10 p-5">
+      <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 sm:py-8">
+        <section className="mb-6 grid gap-3 sm:gap-4 md:grid-cols-3">
+          <div className="rounded-3xl border border-yellow-500/20 bg-yellow-500/10 p-4 sm:p-5">
             <p className="text-sm text-yellow-200/80">골드</p>
-            <p className="mt-2 text-3xl font-black">💰 {resources.gold}</p>
+            <p className="mt-2 text-2xl font-black sm:text-3xl">💰 {resources.gold}</p>
           </div>
-          <div className="rounded-3xl border border-blue-500/20 bg-blue-500/10 p-5">
+          <div className="rounded-3xl border border-blue-500/20 bg-blue-500/10 p-4 sm:p-5">
             <p className="text-sm text-blue-200/80">연료</p>
-            <p className="mt-2 text-3xl font-black">⛽ {resources.fuel}</p>
+            <p className="mt-2 text-2xl font-black sm:text-3xl">⛽ {resources.fuel}</p>
           </div>
-          <div className="rounded-3xl border border-zinc-700 bg-zinc-900 p-5">
-            <p className="text-sm text-zinc-300">철강</p>
-            <p className="mt-2 text-3xl font-black">🛠 {resources.steel}</p>
+          <div className="rounded-3xl border border-cyan-500/20 bg-cyan-500/10 p-4 sm:p-5">
+            <p className="text-sm text-cyan-200/80">철강</p>
+            <p className="mt-2 text-2xl font-black sm:text-3xl">🛠 {resources.steel}</p>
           </div>
         </section>
 
-        <section className="mb-8 flex flex-wrap gap-3">
+        <section className="mb-8 grid gap-3 sm:flex sm:flex-wrap">
           <button
             onClick={handleProduction}
-            className="rounded-2xl bg-blue-600 px-5 py-3 font-bold transition hover:bg-blue-500"
+            className="w-full rounded-2xl bg-blue-600 px-5 py-3 font-bold transition hover:bg-blue-500 sm:w-auto"
           >
             1시간 생산하기
-          </button>
-
-          <button
-            onClick={resetGame}
-            className="rounded-2xl bg-zinc-700 px-5 py-3 font-bold transition hover:bg-zinc-600"
-          >
-            초기화
           </button>
         </section>
 
         <div className="grid gap-6 xl:grid-cols-12">
-          <section className="xl:col-span-4 rounded-3xl border border-zinc-800 bg-zinc-900 p-6">
+          <section className="xl:col-span-4 rounded-3xl border border-zinc-800 bg-zinc-900 p-4 sm:p-6">
             <p className="text-sm text-zinc-400">Army Status</p>
             <h2 className="mt-1 text-2xl font-bold">병력 현황</h2>
 
@@ -420,14 +436,14 @@ export default function BasePage() {
             </div>
           </section>
 
-          <section className="xl:col-span-8 rounded-3xl border border-zinc-800 bg-zinc-900 p-6">
+          <section className="xl:col-span-8 rounded-3xl border border-zinc-800 bg-zinc-900 p-4 sm:p-6">
             <p className="text-sm text-zinc-400">Base Facilities</p>
             <h2 className="mt-1 text-2xl font-bold">건물 현황</h2>
 
-            <div className="mt-5 grid gap-5 md:grid-cols-3">
-              <div className="rounded-3xl border border-yellow-500/20 bg-gradient-to-b from-yellow-500/10 to-zinc-900 p-5">
+            <div className="mt-5 grid gap-4 md:grid-cols-3 md:gap-5">
+              <div className="rounded-3xl border border-yellow-500/20 bg-gradient-to-b from-yellow-500/10 to-zinc-900 p-4 sm:p-5">
                 <p className="text-sm text-yellow-200/80">금광</p>
-                <p className="mt-2 text-3xl font-black">
+                <p className="mt-2 text-2xl font-black sm:text-3xl">
                   Lv.{buildings.gold_mine.level}
                 </p>
                 <p className="mt-2 text-sm text-zinc-300">
@@ -450,9 +466,9 @@ export default function BasePage() {
                 </button>
               </div>
 
-              <div className="rounded-3xl border border-blue-500/20 bg-gradient-to-b from-blue-500/10 to-zinc-900 p-5">
+              <div className="rounded-3xl border border-blue-500/20 bg-gradient-to-b from-blue-500/10 to-zinc-900 p-4 sm:p-5">
                 <p className="text-sm text-blue-200/80">정유소</p>
-                <p className="mt-2 text-3xl font-black">
+                <p className="mt-2 text-2xl font-black sm:text-3xl">
                   Lv.{buildings.oil_refinery.level}
                 </p>
                 <p className="mt-2 text-sm text-zinc-300">
@@ -475,9 +491,9 @@ export default function BasePage() {
                 </button>
               </div>
 
-              <div className="rounded-3xl border border-zinc-700 bg-gradient-to-b from-zinc-700/20 to-zinc-900 p-5">
-                <p className="text-sm text-zinc-300">제철소</p>
-                <p className="mt-2 text-3xl font-black">
+              <div className="rounded-3xl border border-cyan-500/20 bg-gradient-to-b from-cyan-500/10 to-zinc-900 p-4 sm:p-5">
+                <p className="text-sm text-cyan-200/80">제철소</p>
+                <p className="mt-2 text-2xl font-black sm:text-3xl">
                   Lv.{buildings.steel_factory.level}
                 </p>
                 <p className="mt-2 text-sm text-zinc-300">
@@ -485,7 +501,7 @@ export default function BasePage() {
                 </p>
 
                 {buildings.steel_factory.upgradingUntil && (
-                  <p className="mt-3 text-sm font-semibold text-zinc-300">
+                  <p className="mt-3 text-sm font-semibold text-cyan-300">
                     업그레이드 중...{' '}
                     {getRemainingSeconds(buildings.steel_factory.upgradingUntil)}초 남음
                   </p>
@@ -494,14 +510,14 @@ export default function BasePage() {
                 <button
                   disabled={!!buildings.steel_factory.upgradingUntil}
                   onClick={() => upgradeBuilding('steel_factory')}
-                  className="mt-5 w-full rounded-2xl bg-zinc-500 px-4 py-3 font-bold text-white transition hover:bg-zinc-400 disabled:bg-zinc-700 disabled:text-zinc-300"
+                  className="mt-5 w-full rounded-2xl bg-cyan-500 px-4 py-3 font-bold text-black transition hover:bg-cyan-400 disabled:bg-zinc-700 disabled:text-zinc-300"
                 >
                   제철소 업그레이드
                 </button>
               </div>
             </div>
 
-            <div className="mt-6 rounded-3xl border border-zinc-800 bg-zinc-950/70 p-5">
+            <div className="mt-6 rounded-3xl border border-zinc-800 bg-zinc-950/70 p-4 sm:p-5">
               <p className="text-sm text-zinc-400">Production Summary</p>
               <h3 className="mt-1 text-xl font-bold">현재 생산 효율</h3>
 

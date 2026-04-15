@@ -25,6 +25,12 @@ export type Buildings = {
   }
 }
 
+export type TrainingQueues = {
+  infantry: number[]
+  armored: number[]
+  tank: number[]
+}
+
 export const defaultResources: Resources = {
   gold: 1000,
   fuel: 500,
@@ -52,9 +58,16 @@ export const defaultBuildings: Buildings = {
   },
 }
 
+export const defaultTrainingQueues: TrainingQueues = {
+  infantry: [],
+  armored: [],
+  tank: [],
+}
+
 const RESOURCES_KEY = 'wf_resources'
 const UNITS_KEY = 'wf_units'
 const BUILDINGS_KEY = 'wf_buildings'
+const TRAINING_KEY = 'wf_training'
 
 export function loadResources(): Resources {
   if (typeof window === 'undefined') return defaultResources
@@ -63,7 +76,13 @@ export function loadResources(): Resources {
   if (!saved) return defaultResources
 
   try {
-    return JSON.parse(saved)
+    const parsed = JSON.parse(saved)
+
+    return {
+      gold: Number(parsed.gold) || defaultResources.gold,
+      fuel: Number(parsed.fuel) || defaultResources.fuel,
+      steel: Number(parsed.steel) || defaultResources.steel,
+    }
   } catch {
     return defaultResources
   }
@@ -81,7 +100,13 @@ export function loadUnits(): Units {
   if (!saved) return defaultUnits
 
   try {
-    return JSON.parse(saved)
+    const parsed = JSON.parse(saved)
+
+    return {
+      infantry: Number(parsed.infantry) || 0,
+      armored: Number(parsed.armored) || 0,
+      tank: Number(parsed.tank) || 0,
+    }
   } catch {
     return defaultUnits
   }
@@ -92,6 +117,32 @@ export function saveUnits(units: Units) {
   localStorage.setItem(UNITS_KEY, JSON.stringify(units))
 }
 
+function normalizeBuildingValue(
+  value: unknown
+): { level: number; upgradingUntil: number | null } {
+  if (typeof value === 'number') {
+    return {
+      level: value,
+      upgradingUntil: null,
+    }
+  }
+
+  if (typeof value === 'object' && value !== null) {
+    const v = value as { level?: unknown; upgradingUntil?: unknown }
+
+    return {
+      level: typeof v.level === 'number' ? v.level : 1,
+      upgradingUntil:
+        typeof v.upgradingUntil === 'number' ? v.upgradingUntil : null,
+    }
+  }
+
+  return {
+    level: 1,
+    upgradingUntil: null,
+  }
+}
+
 export function loadBuildings(): Buildings {
   if (typeof window === 'undefined') return defaultBuildings
 
@@ -99,7 +150,13 @@ export function loadBuildings(): Buildings {
   if (!saved) return defaultBuildings
 
   try {
-    return JSON.parse(saved)
+    const parsed = JSON.parse(saved)
+
+    return {
+      gold_mine: normalizeBuildingValue(parsed.gold_mine),
+      oil_refinery: normalizeBuildingValue(parsed.oil_refinery),
+      steel_factory: normalizeBuildingValue(parsed.steel_factory),
+    }
   } catch {
     return defaultBuildings
   }
@@ -108,4 +165,43 @@ export function loadBuildings(): Buildings {
 export function saveBuildings(buildings: Buildings) {
   if (typeof window === 'undefined') return
   localStorage.setItem(BUILDINGS_KEY, JSON.stringify(buildings))
+}
+
+function normalizeTrainingArray(value: unknown): number[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((v) => typeof v === 'number')
+}
+
+export function loadTrainingQueues(): TrainingQueues {
+  if (typeof window === 'undefined') return defaultTrainingQueues
+
+  const saved = localStorage.getItem(TRAINING_KEY)
+  if (!saved) return defaultTrainingQueues
+
+  try {
+    const parsed = JSON.parse(saved)
+
+    return {
+      infantry: normalizeTrainingArray(parsed.infantry),
+      armored: normalizeTrainingArray(parsed.armored),
+      tank: normalizeTrainingArray(parsed.tank),
+    }
+  } catch {
+    return defaultTrainingQueues
+  }
+}
+
+export function saveTrainingQueues(training: TrainingQueues) {
+  if (typeof window === 'undefined') return
+  localStorage.setItem(TRAINING_KEY, JSON.stringify(training))
+}
+
+export function resetAllGameData() {
+  if (typeof window === 'undefined') return
+
+  localStorage.removeItem(RESOURCES_KEY)
+  localStorage.removeItem(UNITS_KEY)
+  localStorage.removeItem(BUILDINGS_KEY)
+  localStorage.removeItem(TRAINING_KEY)
+  localStorage.removeItem('wf_reports')
 }
